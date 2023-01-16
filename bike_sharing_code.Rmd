@@ -1,0 +1,478 @@
+---
+title: "Bikesharing Analysis in D.C. Area"
+author: "Phineas Pham"
+date: '2022-10-16'
+output: html_document
+---
+
+```{r setup, include=FALSE, warning = F}
+knitr::opts_chunk$set(echo = TRUE)
+require(astsa) #Library for book
+require(xts)
+require(mosaic)
+require(dplyr)
+require(car)
+require(Stat2Data)
+require(dynlm)
+library(nlme)
+require(AER)
+library(forecast)
+require(mgcv)
+library(tseries) # need for Augmented Dickey-Fuller test
+require(lmtest) # need for Durbin Watson test
+require(fBasics) # need for normality tests of residuals
+require(leaps)
+require(urca) # need for ERS test of stationarity
+library(tidyverse)
+library(lubridate)
+library(readr)
+library(padr)
+
+```
+
+**Input data**
+
+```{r, warning = FALSE}
+bike_share <- read_csv("bike_sharing_dataset.csv")
+#View(space_missions)
+#View(bike_share)
+```
+
+
+**EDA**
+```{r}
+total_cust = bike_share$total_cust
+str(bike_share)
+
+```
+```{r}
+summary(bike_share)
+```
+
+```{r}
+na_index = list(which(is.na(bike_share$total_cust), arr.ind=TRUE))
+na_index
+```
+
+There are 4 continous days that we have missing data in total_cust
+
+```{r}
+tsplot(total_cust[1800:1900])
+```
+
+Thus, I will fill those values with middle values between values at indices 1848 and 1853.
+
+```{r}
+temp = (total_cust[[1848]] - total_cust[[1853]] )
+temp
+```
+
+```{r}
+bike_share$total_cust[1849] <- total_cust[[1848]] - (1/5)*temp
+bike_share$total_cust[1850] <- total_cust[[1848]] - 2*(1/5)*temp
+bike_share$total_cust[1851] <- total_cust[[1848]] - 3*(1/5)*temp
+bike_share$total_cust[1852] <- total_cust[[1848]] - 4*(1/5)*temp
+total_cust <- bike_share$total_cust
+```
+
+```{r}
+tsplot(total_cust[1800:1900])
+which(is.na(bike_share$total_cust), arr.ind=TRUE)
+```
+
+Now there is no more NA value in total_cust
+
+```{r}
+ggplot( data = bike_share, aes( date, total_cust )) + 
+  geom_line() +
+  ylab('Total Customers') +
+  xlab('Time') +
+  theme_minimal()
+```
+
+```{r}
+tsplot(bike_share$total_cust)
+```
+
+*Use log version*
+```{r}
+log_total_cust <- log(bike_share$total_cust)
+tsplot(log_total_cust)
+```
+
+```{r}
+ggplot( data = bike_share, aes( date, log_total_cust )) + 
+  geom_line() +
+  ylab('Transformed Total Customers') +
+  xlab('Time') +
+  theme_minimal()
+```
+
+**Non Parametric Trend**
+
+Smooth to with frequency = 7
+```{r}
+cust_2week = ts(log_total_cust, freq=7)
+tsplot(cust_2week, col=8, ylab = 'Total Customers') # the time scale matters (not shown)
+lines(ksmooth(time(cust_2week), cust_2week, "normal", bandwidth=12), lwd=2, col=4)
+
+```
+Smooth to with frequency = 14
+```{r}
+cust_2week = ts(log_total_cust, freq=14)
+tsplot(cust_2week, col=8, ylab = 'Total Customers') # the time scale matters (not shown)
+lines(ksmooth(time(cust_2week), cust_2week, "normal", bandwidth=12), lwd=2, col=4)
+
+```
+
+Smooth to with frequency = 28
+```{r}
+cust_2week = ts(log_total_cust, freq=28)
+tsplot(cust_2week, col=8, ylab = 'Total Customers') # the time scale matters (not shown)
+lines(ksmooth(time(cust_2week), cust_2week, "normal", bandwidth=12), lwd=2, col=4)
+
+```
+
+
+**Decomposition**
+
+```{r}
+sub1_ts <- ts(log_total_cust, start=c(2011,1), end=c(2018,365), frequency=365)
+cust.dec = decompose(sub1_ts)
+plot(cust.dec)
+
+sub1_ts <- ts(cust_2week, start=c(2011,1), end=c(2018,365), frequency=365)
+cust.dec = decompose(sub1_ts)
+plot(cust.dec)
+```
+
+
+
+**Fitting SARIMA Model**
+
+Now we check the detrended and differenced time series to see which one is stationary
+
+```{r}
+
+par(mfrow=2:1) # plot transformed data
+tsplot(log(total_cust), main="log" )
+tsplot(diff(total_cust), main="differenced" )
+```
+
+Differenced time series looks stationary.
+
+
+```{r}
+tsplot(diff(log_total_cust))
+
+summary(ur.ers(diff(log_total_cust)))
+```
+```{r}
+adf.test(diff(log_total_cust))
+pp.test(diff(log_total_cust))
+kpss.test(diff(log_total_cust))
+```
+
+After 4 tests, I am confident that the differenced time series is stationary.
+
+```{r, warning=FALSE}
+mod1 <- Arima(log_total_cust, order = c(0,1,0))
+plot(mod1$residuals)
+acf(mod1$residuals)
+pacf(mod1$residuals)
+
+
+mod1
+```
+
+```{r, warning=FALSE}
+mod1 <- Arima(log_total_cust, order = c(1,1,0))
+plot(mod1$residuals)
+acf(mod1$residuals)
+pacf(mod1$residuals)
+mod1
+
+
+```
+```{r, warning=FALSE}
+mod1 <- Arima(log_total_cust, order = c(1,1,1))
+plot(mod1$residuals)
+acf(mod1$residuals)
+pacf(mod1$residuals)
+mod1
+```
+
+
+
+```{r}
+auto.arima(log_total_cust)
+```
+
+```{r, warning=FALSE}
+mod1 <- Arima(log_total_cust, order = c(3,1,2))
+plot(mod1$residuals)
+acf(mod1$residuals)
+pacf(mod1$residuals)
+coeftest(mod1)
+mod1
+```
+```{r, warning=FALSE}
+mod1 <- Arima(log_total_cust, order = c(1,1,1))
+plot(mod1$residuals)
+acf(mod1$residuals)
+pacf(mod1$residuals)
+coeftest(mod1)
+mod1
+```
+
+
+
+Best ARIMA model:
+```{r, warning=FALSE}
+mod1 <- Arima(log_total_cust, order = c(1,1,1))
+plot(mod1$residuals)
+acf(mod1$residuals)
+pacf(mod1$residuals)
+coeftest(mod1)
+mod1
+```
+
+
+```{r}
+#stationary tests for residuals
+adf.test(mod1$residuals)
+pp.test(mod1$residuals)
+kpss.test(mod1$residuals)
+summary(ur.ers(mod1$residuals))
+```
+
+
+Model utility tests:
+
+```{r}
+checkresiduals(mod1)
+tsdiag(mod1) # looks good
+#mod1 = sarima(total_cust,p=1,d=1,q=1,P=3,D=0,Q=0,S=7)
+
+densityplot(as.numeric(mod1$residuals)) # these look uniform
+sarima(log_total_cust, 1,1,1)
+```
+
+```{r}
+predictions_sarima = predict(mod1,n.ahead=60)
+predictions_sarima 
+```
+Forecasting:
+
+```{r}
+forecastArea <- forecast(exp(mod1$fitted), h = 365)
+plot(forecastArea,lwd=2,col="purple", main="Forecasts from SARIMA(1,1,1)", xlab="Time", ylab="Number of customers") 
+legend("topleft", legend=c("Past", "Future"), col=c("Purple", "Blue"), lty=1:2, cex=0.8) 
+   
+```
+
+**Xreg with temp_max, precipitation, and wind**
+
+Check NA values in columns
+temp_max
+```{r}
+na_index = list(which(is.na(bike_share$temp_max), arr.ind=TRUE))
+na_index
+```
+
+precipitation:
+```{r}
+na_index = list(which(is.na(bike_share$precip), arr.ind=TRUE))
+na_index
+```
+
+wind:
+```{r}
+na_index = list(which(is.na(bike_share$wind), arr.ind=TRUE))
+na_index
+```
+
+We transform the temperature from Celsius to Farenheit to avoid NAs when using log transformation on negative values
+```{r}
+temp_max = bike_share$temp_max * 1.8 + 32
+na_index = list(which(is.na(log(temp_max)), arr.ind=TRUE))
+na_index
+```
+
+We transform the precipitation to increase by 1 so we can use log transformation
+
+```{r}
+na_index = list(which(is.na(log(temp_max)), arr.ind=TRUE))
+na_index
+```
+
+
+# Transforming predictors
+```{r}
+hol = bike_share$holiday
+# use is.na() to identify NA values in the list
+na_values <- is.na(hol)
+# use ifelse() to replace NA values with 0
+hol1 <- ifelse(na_values, 0, hol)  #for latter models
+holiday = log(hol1 + 1)
+temp_max = log(temp_max)
+log_temp_max = log(temp_max)
+precip = log(bike_share$precip + 1)
+wind = log(bike_share$wind)
+tsplot(temp_max)
+tsplot(precip)
+tsplot(wind)
+plot(log_total_cust,temp_max)
+plot(log_total_cust,precip)
+plot(log_total_cust,wind)
+```
+
+```{r}
+na_index = list(which(is.na(precip), arr.ind=TRUE))
+na_index
+```
+
+```{r}
+length(log_total_cust)
+```
+
+```{r}
+#na_or_inf = is.na(xreg) | is.infinite(xreg)
+
+```
+
+```{r}
+# prepare vector of our independent x-variables
+xreg <- cbind(temp_max, precip, wind)
+
+fit <- auto.arima(log_total_cust, xreg = xreg)
+checkresiduals(fit)
+```
+
+```{r}
+sarima(log_total_cust, 3,1,2, xreg = xreg)
+```
+
+
+
+**Spectrum**
+
+```{r}
+mvspec(log_total_cust, col=4, lwd=1)
+mvspec(log_total_cust, col=4, lwd=1, log='y')
+```
+
+nonparametric spectral estimation procedure
+Smoothing -> Better CI
+```{r}
+mvspec(log_total_cust, spans = 2, col=4, lwd=1)
+mvspec(log_total_cust, spans = 2, col=4, lwd=1, log='y')
+```
+Fit an autoregressive spectral estimator to the sunspot data using spec.ar(). Display the parametric spectral estimate curve and the non-parametric one on the same graph, and write a sentence to compare them.
+
+```{r}
+
+```
+
+Find the biggest frequency: (7, 8, 9)
+```{r}
+cust_spec = mvspec(log_total_cust, spans = 2, col=4, lwd=1)
+which(cust_spec$spec>50)
+which(cust_spec$spec>40)
+which(cust_spec$spec>30)
+```
+```{r}
+# The important frequency is spot 8 and 9
+cust_spec$spec[8]
+cust_spec$spec[9]
+# Frequencies
+cust_spec$freq[8] 
+cust_spec$freq[9] 
+# Periods
+1/cust_spec$freq[8]
+1/cust_spec$freq[9]
+```
+
+
+
+```{r}
+t = time(bike_share$date)
+
+omega1 = cust_spec$freq[8]
+
+
+# Let's see how much omega1 explains
+Xcos = cos(2*pi*t*omega1)
+Xsin = sin(2*pi*t*omega1)
+
+
+modC = lm(log_total_cust ~ log(t) + Xcos+Xsin)
+summary(modC) # adjusted R^2 of 0.276
+
+plot(modC,which=1) # looks good
+
+tsplot(modC$residuals) # looks good
+
+histfit=ts(predict(modC),start=1)
+preddf = cbind(log_total_cust, histfit)
+plot(exp(preddf), plot.type="single", col = c("black","red"))
+```
+
+
+```{r}
+t = time(bike_share$date)
+
+omega1 = cust_spec$freq[8]
+omega2 = cust_spec$freq[9]
+
+# Let's see how much omega1 and omega2 explains
+Xcos = cos(2*pi*t*omega1)
+Xsin = sin(2*pi*t*omega1)
+Xcos2 = cos(2*pi*t*omega2)
+Xsin2 = sin(2*pi*t*omega2)
+
+modC = lm(log_total_cust ~  log(t) + Xcos+Xsin +Xcos2+Xsin2)
+summary(modC) 
+
+plot(modC,which=1) 
+
+tsplot(modC$residuals) 
+
+histfit=ts(predict(modC),start=1)
+preddf = cbind(log_total_cust, histfit)
+plot(exp(preddf), plot.type="single", col = c("black","red"))
+```
+
+Mixed Model:
+
+```{r}
+t = time(bike_share$date)
+
+omega1 = cust_spec$freq[8]
+omega2 = cust_spec$freq[9]
+omega3 = cust_spec$freq[7]
+
+
+Xcos = cos(2*pi*t*omega1)
+Xsin = sin(2*pi*t*omega1)
+Xcos2 = cos(2*pi*t*omega2)
+Xsin2 = sin(2*pi*t*omega2)
+Xcos3 = cos(2*pi*t*omega3)
+Xsin3 = sin(2*pi*t*omega3)
+
+modC = lm(log_total_cust ~  log(t) + Xcos+Xsin +Xcos2+temp_max+ precip + wind + holiday)
+summary(modC) 
+
+plot(modC,which=1) 
+
+tsplot(modC$residuals) 
+
+histfit=ts(predict(modC),start=1)
+preddf = cbind(log_total_cust, histfit)
+plot(exp(preddf), plot.type="single", col = c("black","red"))
+```
+
+
+
+
+
